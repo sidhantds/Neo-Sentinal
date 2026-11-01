@@ -14,6 +14,7 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+import pandas as pd
 import pytest
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
@@ -38,8 +39,8 @@ def ensure_pipeline_exists():
 
     rng = np.random.RandomState(42)
     n = 200
-    X = rng.rand(n, len(FEATURE_COLUMNS))
-    y = (X[:, 0] + X[:, 2] > 1.0).astype(int)  # arbitrary but learnable synthetic rule
+    X = pd.DataFrame(rng.rand(n, len(FEATURE_COLUMNS)), columns=FEATURE_COLUMNS)
+    y = (X.iloc[:, 0] + X.iloc[:, 2] > 1.0).astype(int)  # arbitrary but learnable synthetic rule
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)

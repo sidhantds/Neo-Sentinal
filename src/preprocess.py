@@ -69,9 +69,24 @@ def clean(df: pd.DataFrame) -> pd.DataFrame:
         if dropped:
             print(f"Dropped {dropped} rows with negative '{col}'.")
 
-    df[TARGET_COLUMN] = df[TARGET_COLUMN].astype(bool).astype(int)
+    df[TARGET_COLUMN] = _parse_target(df[TARGET_COLUMN])
 
     return df
+
+
+def _parse_target(series: pd.Series) -> pd.Series:
+    """
+    Convert the hazardous label to 0/1. A plain astype(bool) would turn the
+    string "False" into True, so text labels are mapped explicitly.
+    """
+    if series.dtype == bool:
+        return series.astype(int)
+    mapping = {"true": 1, "false": 0, "1": 1, "0": 0, "1.0": 1, "0.0": 0}
+    parsed = series.astype(str).str.strip().str.lower().map(mapping)
+    if parsed.isna().any():
+        bad = sorted(series[parsed.isna()].astype(str).unique())[:5]
+        raise DataValidationError(f"Unrecognised values in '{TARGET_COLUMN}': {bad}")
+    return parsed.astype(int)
 
 
 def split_features_target(df: pd.DataFrame):
