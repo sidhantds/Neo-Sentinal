@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from preprocess import DataValidationError, validate_prediction_input  # noqa: E402
+from preprocess import DataValidationError, risk_tier, validate_prediction_input  # noqa: E402
 
 from app.schemas import (  # noqa: E402
     AsteroidFeatures,
@@ -85,13 +85,7 @@ app = FastAPI(
 
 
 def _risk_tier(probability: float) -> str:
-    if probability < 0.2:
-        return "low"
-    if probability < 0.5:
-        return "moderate"
-    if probability < 0.8:
-        return "elevated"
-    return "high"
+    return risk_tier(probability)
 
 
 @app.get("/health", response_model=HealthResponse)

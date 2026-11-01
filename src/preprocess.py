@@ -106,3 +106,14 @@ def validate_prediction_input(record: dict) -> None:
         raise DataValidationError(
             "est_diameter_min cannot be greater than est_diameter_max."
         )
+
+
+RISK_TIERS = [(0.2, "low"), (0.5, "moderate"), (0.8, "elevated")]
+
+
+def risk_tier(probability: float) -> str:
+    """Map a hazard probability to a triage tier. Shared by the API and the Streamlit app."""
+    for upper, name in RISK_TIERS:
+        if probability < upper:
+            return name
+    return "high"

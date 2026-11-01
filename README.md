@@ -2,7 +2,7 @@
 
 # NEO Sentinel
 
-**Asteroid hazard screening API, trained on NASA's Near Earth Object catalog.**
+**Asteroid hazard screening, trained on NASA's Near Earth Object catalog. Served as a FastAPI service and an interactive Streamlit app.**
 
 Give it an asteroid's size, speed, miss distance and brightness. It returns the probability that NASA would classify the object as potentially hazardous, plus a risk tier an analyst can act on.
 
@@ -11,6 +11,7 @@ Give it an asteroid's size, speed, miss distance and brightness. It returns the 
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.112-009688)
 ![scikit learn](https://img.shields.io/badge/scikit--learn-1.5-F7931E)
 ![XGBoost](https://img.shields.io/badge/XGBoost-2.1-red)
+![Streamlit](https://img.shields.io/badge/Streamlit-app-FF4B4B)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 
 ---
@@ -22,6 +23,15 @@ NASA tracks tens of thousands of near Earth objects. Nobody can run a full orbit
 I wanted a project that goes past a notebook. Real data, an honest evaluation, and a service someone can actually call. NEO Sentinel is my attempt at the full machine learning lifecycle, end to end, the way it would run inside a team.
 
 ## What it does
+
+### Interactive app (Streamlit)
+
+* **Check one object.** Enter size, speed, distance and brightness, or start from an example, and get a hazard probability with a risk tier and a plain language recommendation.
+* **Screen a CSV.** Upload hundreds of objects, get them ranked by risk, and download the results.
+* **How the model decides.** Feature importance, SHAP plot, and a side by side comparison of every model that was tried.
+
+### API (FastAPI)
+
 
 ```bash
 curl -X POST http://localhost:8000/predict \
@@ -54,8 +64,9 @@ flowchart LR
     B --> C[Train, tune, compare<br/>train.py]
     C --> D[Saved pipeline<br/>scaler + model]
     D --> E[FastAPI service]
-    E --> F[Docker image]
-    F --> G[Cloud deploy]
+    D --> H[Streamlit app]
+    E --> F[Docker on Render]
+    H --> I[Streamlit Community Cloud]
 ```
 
 **Data.** NASA Nearest Earth Objects dataset (NeoWs API via Kaggle), about 90,800 records. Five physical and orbital features: estimated diameter (min and max), relative velocity, miss distance, absolute magnitude. Identifiers and constant columns are dropped.
@@ -72,7 +83,8 @@ flowchart LR
 * Scaler and model saved together as a single `sklearn.Pipeline`, so the API can never pair the wrong scaler with the model
 * Pydantic validation rejects bad input: negative values, missing fields, min diameter larger than max
 * Returns a clean `503` if no model is trained yet instead of crashing
-* 15 pytest tests covering validation rules and every API endpoint, run on every push through GitHub Actions
+* API and Streamlit app share the same validation and risk tiers, so both always give the same answer
+* 21 pytest tests covering validation, training, every API endpoint and the Streamlit app (run headless), on every push through GitHub Actions
 * Dockerfile that reads `$PORT`, ready for Render, Railway or any container platform
 
 ## Design decisions I made on purpose
@@ -106,11 +118,25 @@ docker build -t neo-sentinel .
 docker run -p 8000:8000 neo-sentinel
 ```
 
-**Optional Streamlit demo**
+**Streamlit app**
 ```bash
-pip install -r requirements-ui.txt
-API_URL=http://localhost:8000 streamlit run app/streamlit_app.py
+streamlit run streamlit_app.py           # open http://localhost:8501
 ```
+
+## Deploy the Streamlit app (free)
+
+The app loads the trained model directly, so it needs no separate server.
+
+1. Train locally, then commit the model files (they are ignored by default):
+   ```bash
+   python src/train.py --data data/neo.csv
+   git add -f models/pipeline.joblib models/metrics.json models/feature_importance.json models/shap_summary.png
+   git commit -m "Add trained model" && git push
+   ```
+2. Go to [share.streamlit.io](https://share.streamlit.io), sign in with GitHub, click **Create app**.
+3. Repository `sidhantds/Neo-Sentinal`, branch `main`, main file `streamlit_app.py`.
+4. Under **Advanced settings**, pick **Python 3.11** (the pinned libraries need it).
+5. Deploy. You get a public link like `https://neo-sentinel.streamlit.app`.
 
 ## Project structure
 
@@ -118,12 +144,13 @@ API_URL=http://localhost:8000 streamlit run app/streamlit_app.py
 app/
   main.py              FastAPI service
   schemas.py           Request and response models with validation
-  streamlit_app.py     Simple demo UI
 src/
   download_data.py     Pulls the NASA dataset from Kaggle
   preprocess.py        Shared validation and cleaning
   train.py             Baseline, tuning, comparison, test evaluation
-tests/                 pytest suite (preprocessing + API)
+tests/                 pytest suite (preprocessing, training, API, Streamlit)
+streamlit_app.py       Interactive app: single check, batch CSV, model explanation
+.streamlit/            App theme
 docs/PROJECT_PLAN.md   Full design notes, dataset audit and deployment guide
 Dockerfile
 ```
@@ -138,7 +165,7 @@ Dockerfile
 
 ## What I'm adding next
 
-- [ ] Live deployment link with screenshots of `/docs` and a prediction
+- [ ] Live Streamlit link and screenshots in this README
 - [ ] Probability calibration and a threshold chosen from the cost of false negatives
 - [ ] Pull fresh data straight from NASA's NeoWs API instead of a static CSV
 - [ ] Model versioning and experiment tracking with MLflow
