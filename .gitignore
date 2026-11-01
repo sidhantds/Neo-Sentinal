@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/*.csv
+models/*.joblib
+models/*.json
+.pytest_cache/
+.DS_Store
+*.egg-info/
+.env
