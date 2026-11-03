@@ -56,18 +56,81 @@ curl -X POST http://localhost:8000/predict \
 | `GET /model-info` | Model name, features, held out test metrics, feature importance |
 | `GET /docs` | Interactive Swagger UI |
 
-## How it works
+## System design
+
+### Architecture
 
 ```mermaid
-flowchart LR
-    A[NASA NeoWs data<br/>90K+ objects] --> B[Validation<br/>preprocess.py]
-    B --> C[Train, tune, compare<br/>train.py]
-    C --> D[Saved pipeline<br/>scaler + model]
-    D --> E[FastAPI service]
-    D --> H[Streamlit app]
-    E --> F[Docker on Render]
-    H --> I[Streamlit Community Cloud]
+flowchart TB
+    subgraph OFF["Offline: training, run on demand"]
+        direction LR
+        K[("NASA NeoWs CSV<br/>via Kaggle")] --> DL["download_data.py"] --> TR["train.py<br/>tune, compare, select"]
+    end
+
+    subgraph ART["models/ : the only thing that crosses from training to serving"]
+        direction LR
+        PJ[("pipeline.joblib<br/>scaler + model + feature order")]
+        MJ[("metrics.json<br/>held out test scores")]
+        FI[("feature_importance.json")]
+    end
+
+    subgraph ON["Online: two independent serving surfaces"]
+        direction LR
+        API["FastAPI service<br/>/predict /health /model-info"]
+        ST["Streamlit app<br/>single check, CSV screening"]
+    end
+
+    SHARED["Shared code<br/>preprocess.py: schema, cleaning, risk tiers<br/>schemas.py: Pydantic input contract"]
+
+    TR --> ART
+    ART --> API
+    ART --> ST
+    SHARED -. imported by .-> OFF
+    SHARED -. imported by .-> ON
+    CL(["HTTP client"]) --> API
+    AN(["Analyst in a browser"]) --> ST
 ```
+
+The system has two halves that never call each other: **offline training** and **online serving**. The only thing that crosses the boundary is the set of files in `models/`. Solid arrows carry data. Dotted arrows show that training and both serving surfaces import the same validation and preprocessing code.
+
+### What happens on one prediction
+
+1. The request body is checked by the Pydantic model in `schemas.py`: every field present, sizes, speed and distance above zero, minimum diameter not larger than maximum. A bad request stops here with a `422`.
+2. The API applies the cross field rule a second time through `preprocess.validate_prediction_input`. The Streamlit app validates through the same Pydantic model, so both surfaces reject exactly the same inputs.
+3. The record becomes a one row DataFrame **in the column order saved inside the bundle**, not the order the client sent. A client that reorders JSON keys cannot silently feed the model the wrong feature.
+4. The saved pipeline scales the row and returns a probability. The label uses a 0.5 cut, and `risk_tier` maps the probability to low, moderate, elevated or high.
+5. Any unexpected failure is logged with a stack trace on the server and returned to the client as a plain error message, never as a raw trace.
+
+### Design decisions and trade offs
+
+| Decision | Why | Cost |
+|---|---|---|
+| Scaler and model saved as **one** `sklearn.Pipeline` | The API can never pair a model with the wrong scaler | Swapping only the model means retraining the whole pipeline |
+| Feature order stored **inside** the artifact | The artifact describes its own input, so serving does not depend on hard coded column lists | Renaming a feature requires a new artifact |
+| One `preprocess.py` for training and serving | Removes training and serving skew, the most common silent bug in deployed models | Training code and serving code cannot evolve separately |
+| Model loaded **once** at startup through FastAPI's lifespan hook | No disk read per request; every request is a pure in memory computation | A new model needs a restart, so there is no hot swap |
+| Starts **without** a model and returns `503` | `/health` reports `model_loaded`, which works as a readiness probe for a load balancer | A misconfigured deploy looks healthy unless the probe checks that field |
+| Streamlit loads the artifact itself instead of calling the API | The two surfaces deploy and fail independently, and both run on free hosting | Two copies of the model in memory, and nothing guarantees both run the same version |
+| Selection on validation F1, test set scored once | The reported test score is not inflated by tuning | The test set is only 15% of the data, so the score carries more noise |
+
+### What the model is really learning
+
+NASA defines a potentially hazardous asteroid using two numbers: absolute magnitude (H of 22 or brighter) and minimum orbit intersection distance (0.05 AU or closer). This dataset contains H, but **not** the orbit intersection distance. It only has the miss distance of one recorded close approach. The diameter estimates in NeoWs are also computed from H, so three of the five features carry largely the same information.
+
+In practice the model mostly relearns the brightness rule and uses miss distance as a rough stand in for orbit geometry. That explains both why the scores are strong and where they will fail: an object that is bright enough but whose single recorded pass was distant can still be hazardous.
+
+### Scaling
+
+The service holds no state between requests, so it scales horizontally: run more containers behind a load balancer. Each prediction scores a single row, so the cost per request is small. For large workloads the next step is a batch endpoint that scores many rows in one `predict_proba` call, the same way the Streamlit CSV screen already does.
+
+### Known gaps
+
+* **Model artifacts are not in the repo.** `models/*.joblib` and `models/*.json` are in `.gitignore`, so the Docker image copies an empty `models/` folder and a fresh Streamlit Cloud deploy shows "No trained model found." The fix is to train inside the Docker build or in CI, or to publish the artifact as a release asset and download it at startup.
+* **No model versioning.** The bundle records the model name, but not a version, training date or data hash, so you cannot tell which run is live.
+* **Threshold not tuned.** The design favours recall, but the label still uses a fixed 0.5 cut. Choosing the threshold from validation recall would match the stated goal.
+* **No monitoring.** Nothing records the inputs received in production, so drift away from the training data would go unnoticed.
+
+### The model
 
 **Data.** NASA Nearest Earth Objects dataset (NeoWs API via Kaggle), about 90,800 records. Five physical and orbital features: estimated diameter (min and max), relative velocity, miss distance, absolute magnitude. Identifiers and constant columns are dropped.
 
@@ -78,12 +141,7 @@ flowchart LR
 * Class imbalance handled with class weights and `scale_pos_weight` rather than resampling
 * Explainability through feature importance and an optional SHAP summary plot
 
-**Engineering.**
-* One shared preprocessing module used in both training and serving, so there is no training and serving skew
-* Scaler and model saved together as a single `sklearn.Pipeline`, so the API can never pair the wrong scaler with the model
-* Pydantic validation rejects bad input: negative values, missing fields, min diameter larger than max
-* Returns a clean `503` if no model is trained yet instead of crashing
-* API and Streamlit app share the same validation and risk tiers, so both always give the same answer
+**Testing and delivery.**
 * 21 pytest tests covering validation, training, every API endpoint and the Streamlit app (run headless), on every push through GitHub Actions
 * Dockerfile that reads `$PORT`, ready for Render, Railway or any container platform
 
