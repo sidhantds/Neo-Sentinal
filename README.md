@@ -150,6 +150,12 @@ Inputs outside the training range are still scored, but come back with a plain-l
 
 ## The app
 
+![Checking one asteroid: hazard probability, risk tier, estimated size and a what-if curve](docs/images/check-one.png)
+
+| Screen a CSV | Model report |
+|---|---|
+| ![Screening the full NASA file, ranked by risk](docs/images/screen-csv.png) | ![Model report with data findings and candidate comparison](docs/images/model-report.png) |
+
 * **Check one object.** Pick an example or type values, get the probability, tier, estimated size and advice, plus a "what if it were bigger or smaller" curve that shows the jump at NASA's H = 22 line.
 * **Screen a CSV.** Upload many objects (the original NASA file works as is) and download them ranked. If the file has NASA's labels, you also see how many hazardous objects were caught.
 * **This week's approaches.** Pulls real close approaches from NASA's NeoWs feed, scores them, and puts NASA's own label next to each one.
@@ -177,6 +183,7 @@ neo_sentinel/
   api/             FastAPI app and request/response schemas
 streamlit_app.py   the app
 models/            committed model, model card, experiment results
+docs/images/       app screenshots used in this README
 tests/             55 tests: data, splitting, metrics, training, API, app, NASA parser, shipped model
 ```
 
@@ -191,7 +198,7 @@ tests/             55 tests: data, splitting, metrics, training, API, app, NASA 
 
 - [ ] **Use each asteroid's approach history.** Adding its closest recorded pass, number of passes and top speed lifts test average precision from **0.50 to 0.74** (`models/experiment_history_features.json`). It means changing the API to take a history instead of one observation, and computing those features from NASA's full close-approach record rather than this dataset's time window.
 - [ ] Retrain on the NeoWs browse API so the data stays current.
-- [ ] Add a live demo link and screenshots here.
+- [ ] Deploy to Streamlit Community Cloud and add the live link here.
 
 ## About me
 
