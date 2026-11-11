@@ -1,0 +1,16 @@
+{
+  "question": "How much does splitting rows at random (instead of by asteroid) inflate the test score?",
+  "model": "RandomForestClassifier(n_estimators=150), fully grown trees",
+  "results": {
+    "random_rows": {
+      "test_asteroids_also_in_training": 0.8561,
+      "average_precision": 0.5947,
+      "roc_auc": 0.9321
+    },
+    "by_asteroid": {
+      "test_asteroids_also_in_training": 0.0,
+      "average_precision": 0.4965,
+      "roc_auc": 0.9105
+    }
+  }
+}

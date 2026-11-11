@@ -1,0 +1,243 @@
+{
+  "model_name": "hist_gradient_boosting",
+  "metadata": {
+    "model_version": "2026.11.11.0153-61b67ccf",
+    "trained_at": "2026-11-11T01:53:36+00:00",
+    "package_version": "2.0.0",
+    "sklearn_version": "1.9.1",
+    "python_version": "3.13.18",
+    "git_commit": "59f3b07",
+    "data_file": "neo.csv",
+    "data_sha256": "61b67ccfd0c4b01b0c628ee7c9a32cba0149b5e1fe56619bbae1373bbd5b3e66"
+  },
+  "features": [
+    "absolute_magnitude",
+    "relative_velocity",
+    "miss_distance"
+  ],
+  "target_recall": 0.95,
+  "threshold": 0.2111,
+  "tier_edges": [
+    0.2111,
+    0.3,
+    0.6
+  ],
+  "selection_rule": "among models with at most 1% physics violations on validation, highest validation average precision (ties: ROC AUC)",
+  "threshold_rule": "highest validation threshold with recall >= 0.95",
+  "dataset": {
+    "rows": 90836,
+    "unique_asteroids": 27423,
+    "hazardous_share_rows": 0.0973,
+    "hazardous_share_asteroids": 0.0792,
+    "max_rows_per_asteroid": 43,
+    "diameter_max_relative_error_vs_formula": 5.2627426719779424e-08
+  },
+  "cleaning": {
+    "rows_in": 90836,
+    "rows_out": 90836,
+    "dropped": {
+      "missing_label_or_id": 0,
+      "invalid_features": 0,
+      "exact_duplicates": 0
+    }
+  },
+  "split": {
+    "method": "stratified, grouped by asteroid id (no asteroid in more than one part)",
+    "rows": {
+      "train": 63584,
+      "validation": 13626,
+      "test": 13626
+    },
+    "asteroids": {
+      "train": 19194,
+      "validation": 4115,
+      "test": 4114
+    }
+  },
+  "validation": {
+    "brightness_rule": {
+      "threshold": 1.0,
+      "average_precision": 0.2923,
+      "roc_auc": 0.8645,
+      "brier": 0.2283,
+      "recall": 0.9796,
+      "precision": 0.2964,
+      "f1": 0.4551,
+      "flagged_share": 0.3217,
+      "confusion_matrix": {
+        "true_negative": 9216,
+        "false_positive": 3084,
+        "false_negative": 27,
+        "true_positive": 1299
+      },
+      "physics_violations": 0.0
+    },
+    "logistic_regression": {
+      "threshold": 0.0852,
+      "average_precision": 0.2922,
+      "roc_auc": 0.872,
+      "brier": 0.0792,
+      "recall": 0.9502,
+      "precision": 0.2797,
+      "f1": 0.4322,
+      "flagged_share": 0.3306,
+      "confusion_matrix": {
+        "true_negative": 9055,
+        "false_positive": 3245,
+        "false_negative": 66,
+        "true_positive": 1260
+      },
+      "physics_violations": 0.0
+    },
+    "random_forest": {
+      "threshold": 0.2072,
+      "average_precision": 0.4896,
+      "roc_auc": 0.9074,
+      "brier": 0.0628,
+      "recall": 0.9502,
+      "precision": 0.3118,
+      "f1": 0.4695,
+      "flagged_share": 0.2966,
+      "confusion_matrix": {
+        "true_negative": 9519,
+        "false_positive": 2781,
+        "false_negative": 66,
+        "true_positive": 1260
+      },
+      "physics_violations": 0.0845
+    },
+    "hist_gradient_boosting": {
+      "threshold": 0.2111,
+      "average_precision": 0.4824,
+      "roc_auc": 0.9062,
+      "brier": 0.0628,
+      "recall": 0.9502,
+      "precision": 0.313,
+      "f1": 0.4709,
+      "flagged_share": 0.2954,
+      "confusion_matrix": {
+        "true_negative": 9535,
+        "false_positive": 2765,
+        "false_negative": 66,
+        "true_positive": 1260
+      },
+      "physics_violations": 0.0
+    }
+  },
+  "best_params": {
+    "brightness_rule": {},
+    "logistic_regression": {
+      "model__C": 10.0
+    },
+    "random_forest": {
+      "min_samples_leaf": 20,
+      "max_features": 1,
+      "max_depth": 8
+    },
+    "hist_gradient_boosting": {
+      "min_samples_leaf": 20,
+      "max_leaf_nodes": 15,
+      "max_iter": 300,
+      "learning_rate": 0.03,
+      "l2_regularization": 0.0
+    }
+  },
+  "test": {
+    "threshold": 0.2111,
+    "average_precision": 0.5043,
+    "roc_auc": 0.9117,
+    "brier": 0.061,
+    "recall": 0.9465,
+    "precision": 0.325,
+    "f1": 0.4838,
+    "flagged_share": 0.2834,
+    "confusion_matrix": {
+      "true_negative": 9693,
+      "false_positive": 2607,
+      "false_negative": 71,
+      "true_positive": 1255
+    }
+  },
+  "test_baseline_brightness_rule": {
+    "threshold": 0.5,
+    "average_precision": 0.3046,
+    "roc_auc": 0.875,
+    "brier": 0.2196,
+    "recall": 0.9925,
+    "precision": 0.3062,
+    "f1": 0.468,
+    "flagged_share": 0.3154,
+    "confusion_matrix": {
+      "true_negative": 9318,
+      "false_positive": 2982,
+      "false_negative": 10,
+      "true_positive": 1316
+    }
+  },
+  "calibration_test": [
+    {
+      "mean_predicted": 0.0,
+      "observed_rate": 0.0,
+      "count": 1363
+    },
+    {
+      "mean_predicted": 0.0,
+      "observed_rate": 0.0,
+      "count": 1363
+    },
+    {
+      "mean_predicted": 0.0,
+      "observed_rate": 0.0,
+      "count": 1363
+    },
+    {
+      "mean_predicted": 0.0,
+      "observed_rate": 0.0007,
+      "count": 1363
+    },
+    {
+      "mean_predicted": 0.0,
+      "observed_rate": 0.0007,
+      "count": 1363
+    },
+    {
+      "mean_predicted": 0.0,
+      "observed_rate": 0.0,
+      "count": 1363
+    },
+    {
+      "mean_predicted": 0.0148,
+      "observed_rate": 0.0132,
+      "count": 1362
+    },
+    {
+      "mean_predicted": 0.2329,
+      "observed_rate": 0.2364,
+      "count": 1362
+    },
+    {
+      "mean_predicted": 0.2795,
+      "observed_rate": 0.3025,
+      "count": 1362
+    },
+    {
+      "mean_predicted": 0.4288,
+      "observed_rate": 0.42,
+      "count": 1362
+    }
+  ],
+  "permutation_importance_test": {
+    "absolute_magnitude": {
+      "mean": 0.4082,
+      "std": 0.0017
+    },
+    "miss_distance": {
+      "mean": 0.1936,
+      "std": 0.0071
+    },
+    "relative_velocity": {
+      "mean": 0.0219,
+      "std": 0.0052
+    }
+  }
+}

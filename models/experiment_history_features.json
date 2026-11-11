@@ -1,0 +1,56 @@
+{
+  "question": "How much does an asteroid's close approach history add to a single approach?",
+  "note": "approaches_recorded depends on the time window the dataset covers, so a production version should compute history features from NASA's full close approach record.",
+  "target_recall": 0.95,
+  "results": {
+    "single_approach": {
+      "features": [
+        "absolute_magnitude",
+        "relative_velocity",
+        "miss_distance"
+      ],
+      "test": {
+        "threshold": 0.1362,
+        "average_precision": 0.4997,
+        "roc_auc": 0.9112,
+        "brier": 0.0617,
+        "recall": 0.9706,
+        "precision": 0.3239,
+        "f1": 0.4858,
+        "flagged_share": 0.2916,
+        "confusion_matrix": {
+          "true_negative": 9614,
+          "false_positive": 2686,
+          "false_negative": 39,
+          "true_positive": 1287
+        }
+      }
+    },
+    "with_history": {
+      "features": [
+        "absolute_magnitude",
+        "relative_velocity",
+        "miss_distance",
+        "closest_miss_distance",
+        "approaches_recorded",
+        "fastest_velocity"
+      ],
+      "test": {
+        "threshold": 0.0638,
+        "average_precision": 0.7409,
+        "roc_auc": 0.9507,
+        "brier": 0.0461,
+        "recall": 0.8839,
+        "precision": 0.3697,
+        "f1": 0.5214,
+        "flagged_share": 0.2326,
+        "confusion_matrix": {
+          "true_negative": 10302,
+          "false_positive": 1998,
+          "false_negative": 154,
+          "true_positive": 1172
+        }
+      }
+    }
+  }
+}

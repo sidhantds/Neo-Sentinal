@@ -1,242 +1,204 @@
-
-
 # NEO Sentinel
 
-**Asteroid hazard screening, trained on NASA's Near Earth Object catalog. Served as a FastAPI service and an interactive Streamlit app.**
-
-Give it an asteroid's size, speed, miss distance and brightness. It returns the probability that NASA would classify the object as potentially hazardous, plus a risk tier an analyst can act on.
+**Which asteroid close approaches deserve a closer look?** NEO Sentinel scores a near Earth object's close approach and returns a calibrated probability that NASA lists it as a potentially hazardous asteroid, plus a review decision and a risk tier. It is trained on NASA's NeoWs catalog and served as a FastAPI service and a Streamlit app, with a trained model included so both work right after cloning.
 
 [![tests](https://github.com/sidhantds/Neo-Sentinal/actions/workflows/tests.yml/badge.svg)](https://github.com/sidhantds/Neo-Sentinal/actions/workflows/tests.yml)
-![Python](https://img.shields.io/badge/python-3.11-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.112-009688)
-![scikit learn](https://img.shields.io/badge/scikit--learn-1.5-F7931E)
-![XGBoost](https://img.shields.io/badge/XGBoost-2.1-red)
+![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-1.9-F7931E)
+![FastAPI](https://img.shields.io/badge/FastAPI-service-009688)
 ![Streamlit](https://img.shields.io/badge/Streamlit-app-FF4B4B)
-![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 
 ---
 
-## Why I built this
+## Results
 
-NASA tracks tens of thousands of near Earth objects. Nobody can run a full orbital analysis on every one of them, so the real question is triage: which objects deserve a closer look first?
+All numbers come from `models/model_card.json`, written by the training run. The test set is 4,114 asteroids the model never saw, scored once.
 
-I wanted a project that goes past a notebook. Real data, an honest evaluation, and a service someone can actually call. NEO Sentinel is my attempt at the full machine learning lifecycle, end to end, the way it would run inside a team.
+| On the test set | Avg precision | ROC AUC | Recall | Share of objects flagged | Hazardous missed | False alarms |
+|---|---|---|---|---|---|---|
+| NASA's H ≤ 22 brightness rule | 0.305 | 0.875 | 99.2% | 31.5% | 10 | 2,982 |
+| **NEO Sentinel model** | **0.504** | **0.912** | 94.7% | **28.3%** | 71 | **2,607** |
 
-## What it does
+**How to read this.** The model ranks risk far better than the rule (average precision 0.50 vs 0.30), and its probabilities are calibrated: objects it scores around 43% turn out hazardous 42% of the time. At the chosen review line it sends 375 fewer false alarms to analysts, but it also misses 61 more hazardous objects than the rule. So it does **not** replace the rule. It works best for **ordering the review queue**, so the riskiest objects get looked at first. If missing anything is unacceptable, raise the recall target (`--target-recall 0.99`) and the list grows to match.
 
-### Interactive app (Streamlit)
+## What I found in the data
 
-* **Check one object.** Enter size, speed, distance and brightness, or start from an example, and get a hazard probability with a risk tier and a plain language recommendation.
-* **Screen a CSV.** Upload hundreds of objects, get them ranked by risk, and download the results.
-* **How the model decides.** Feature importance, SHAP plot, and a side by side comparison of every model that was tried.
+Before modelling, I looked at the dataset. Three things changed how the project had to be built.
 
-### API (FastAPI)
+1. **90,836 rows, but only 27,423 asteroids.** Each asteroid appears once per recorded close approach (up to 43 times), always with the same label. A random row split, which is what most notebooks on this dataset use, put **86% of test asteroids into training too**, and inflated average precision from 0.50 to 0.59. Every split here is made by asteroid. Reproduce with `python -m neo_sentinel experiment`.
+2. **The two diameter columns are brightness in disguise.** `est_diameter_min` and `est_diameter_max` match the standard formula `D = 1329 / sqrt(albedo) × 10^(−H/5)` to within 5 × 10⁻⁸, so they add nothing that H lacks. The model uses three inputs: absolute magnitude, velocity, and miss distance. The API still returns the diameter range, computed from H.
+3. **NASA's label needs data this dataset doesn't have.** An asteroid is "potentially hazardous" if H ≤ 22 **and** its minimum orbit intersection distance (MOID) is ≤ 0.05 AU. The data has H but no MOID. The model can learn the brightness half of the rule (it puts a sharp step at H = 22 without being told) and use miss distance as a rough stand-in for MOID. That gap caps what any model on this data can score.
 
-
-```bash
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{"est_diameter_min":0.1,"est_diameter_max":0.25,"relative_velocity":45000,"miss_distance":5000000,"absolute_magnitude":21.5}'
-```
-
-```json
-{
-  "hazardous": false,
-  "hazard_probability": 0.1342,
-  "model_name": "xgboost",
-  "risk_tier": "low"
-}
-```
-*Example response shape. Actual values depend on your trained model.*
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /health` | Service status and whether a model is loaded |
-| `POST /predict` | Hazard probability, label and risk tier (low, moderate, elevated, high) |
-| `GET /model-info` | Model name, features, held out test metrics, feature importance |
-| `GET /docs` | Interactive Swagger UI |
-
-## System design
-
-### Architecture
+## How it decides
 
 ```mermaid
-flowchart TB
-    subgraph OFF["Offline: training, run on demand"]
-        direction LR
-        K[("NASA NeoWs CSV<br/>via Kaggle")] --> DL["download_data.py"] --> TR["train.py<br/>tune, compare, select"]
+flowchart LR
+    subgraph OFF["Offline: python -m neo_sentinel train"]
+        direction TB
+        D[("NASA NeoWs CSV<br/>SHA-256 verified")] --> C["clean + validate<br/>data.py"]
+        C --> S["split by asteroid<br/>70 / 15 / 15"]
+        S --> T["tune 3 models + H≤22 rule<br/>grouped CV"]
+        T --> G{"physics check<br/>bigger or closer ⇒<br/>never less risky"}
+        G --> P["pick best validation AP<br/>set threshold for 95% recall"]
+        P --> F["refit on train+val<br/>test once"]
     end
-
-    subgraph ART["models/ : the only thing that crosses from training to serving"]
-        direction LR
-        PJ[("pipeline.joblib<br/>scaler + model + feature order")]
-        MJ[("metrics.json<br/>held out test scores")]
-        FI[("feature_importance.json")]
-    end
-
-    subgraph ON["Online: two independent serving surfaces"]
-        direction LR
-        API["FastAPI service<br/>/predict /health /model-info"]
-        ST["Streamlit app<br/>single check, CSV screening"]
-    end
-
-    SHARED["Shared code<br/>preprocess.py: schema, cleaning, risk tiers<br/>schemas.py: Pydantic input contract"]
-
-    TR --> ART
-    ART --> API
-    ART --> ST
-    SHARED -. imported by .-> OFF
-    SHARED -. imported by .-> ON
-    CL(["HTTP client"]) --> API
-    AN(["Analyst in a browser"]) --> ST
+    F --> B[("models/neo_sentinel.joblib<br/>model + threshold + version<br/>+ training profile")]
+    B --> API["FastAPI<br/>/predict /predict/batch<br/>/model /monitoring/drift"]
+    B --> APP["Streamlit app<br/>single · CSV · live NASA feed"]
+    NASA(["NASA NeoWs API"]) -.live approaches.-> APP
 ```
 
-The system has two halves that never call each other: **offline training** and **online serving**. The only thing that crosses the boundary is the set of files in `models/`. Solid arrows carry data. Dotted arrows show that training and both serving surfaces import the same validation and preprocessing code.
+Both the API and the app score through the same `ModelBundle.score()`, so they cannot disagree.
 
-### What happens on one prediction
-
-1. The request body is checked by the Pydantic model in `schemas.py`: every field present, sizes, speed and distance above zero, minimum diameter not larger than maximum. A bad request stops here with a `422`.
-2. The API applies the cross field rule a second time through `preprocess.validate_prediction_input`. The Streamlit app validates through the same Pydantic model, so both surfaces reject exactly the same inputs.
-3. The record becomes a one row DataFrame **in the column order saved inside the bundle**, not the order the client sent. A client that reorders JSON keys cannot silently feed the model the wrong feature.
-4. The saved pipeline scales the row and returns a probability. The label uses a 0.5 cut, and `risk_tier` maps the probability to low, moderate, elevated or high.
-5. Any unexpected failure is logged with a stack trace on the server and returned to the client as a plain error message, never as a raw trace.
-
-### Design decisions and trade offs
+### Decisions and trade-offs
 
 | Decision | Why | Cost |
 |---|---|---|
-| Scaler and model saved as **one** `sklearn.Pipeline` | The API can never pair a model with the wrong scaler | Swapping only the model means retraining the whole pipeline |
-| Feature order stored **inside** the artifact | The artifact describes its own input, so serving does not depend on hard coded column lists | Renaming a feature requires a new artifact |
-| One `preprocess.py` for training and serving | Removes training and serving skew, the most common silent bug in deployed models | Training code and serving code cannot evolve separately |
-| Model loaded **once** at startup through FastAPI's lifespan hook | No disk read per request; every request is a pure in memory computation | A new model needs a restart, so there is no hot swap |
-| Starts **without** a model and returns `503` | `/health` reports `model_loaded`, which works as a readiness probe for a load balancer | A misconfigured deploy looks healthy unless the probe checks that field |
-| Streamlit loads the artifact itself instead of calling the API | The two surfaces deploy and fail independently, and both run on free hosting | Two copies of the model in memory, and nothing guarantees both run the same version |
-| Selection on validation F1, test set scored once | The reported test score is not inflated by tuning | The test set is only 15% of the data, so the score carries more noise |
+| Split, cross-validate and test **by asteroid** | Stops the model being graded on objects it already saw | The test score looks lower, because it's honest |
+| Compare against the **H ≤ 22 rule** | A model that can't beat a one-line rule isn't worth deploying | None; it keeps everyone honest |
+| **Physics check** before selection: making an object bigger, or its pass closer, must never lower its risk | Random forest scored 0.007 higher on validation but broke this for 8.5% of objects, so it was fitting noise | Gave up a little validation AP for answers that make physical sense |
+| **Monotonic constraints** in gradient boosting | Builds the physics check into the model itself | Slightly less flexible |
+| Imbalance handled by the **threshold**, not class weights | Keeps probabilities calibrated, so "30%" means about 3 in 10 | Threshold must be chosen on validation data |
+| Threshold = smallest review list that reaches **95% recall on validation** | Missing a hazardous object costs more than a false alarm | Test recall came in at 94.7%, just under the 95% target, which is normal noise on a held-out set |
+| **Model committed** to the repo (190 KB) | API, app and Docker image work on a fresh clone | The repo must be retrained when the code changes how models are built |
+| Version, training time, data checksum and library versions **inside the bundle** | You can always tell which model is live | None |
 
-### What the model is really learning
+## Run it
 
-NASA defines a potentially hazardous asteroid using two numbers: absolute magnitude (H of 22 or brighter) and minimum orbit intersection distance (0.05 AU or closer). This dataset contains H, but **not** the orbit intersection distance. It only has the miss distance of one recorded close approach. The diameter estimates in NeoWs are also computed from H, so three of the five features carry largely the same information.
-
-In practice the model mostly relearns the brightness rule and uses miss distance as a rough stand in for orbit geometry. That explains both why the scores are strong and where they will fail: an object that is bright enough but whose single recorded pass was distant can still be hazardous.
-
-### Scaling
-
-The service holds no state between requests, so it scales horizontally: run more containers behind a load balancer. Each prediction scores a single row, so the cost per request is small. For large workloads the next step is a batch endpoint that scores many rows in one `predict_proba` call, the same way the Streamlit CSV screen already does.
-
-### Known gaps
-
-* **Model artifacts are not in the repo.** `models/*.joblib` and `models/*.json` are in `.gitignore`, so the Docker image copies an empty `models/` folder and a fresh Streamlit Cloud deploy shows "No trained model found." The fix is to train inside the Docker build or in CI, or to publish the artifact as a release asset and download it at startup.
-* **No model versioning.** The bundle records the model name, but not a version, training date or data hash, so you cannot tell which run is live.
-* **Threshold not tuned.** The design favours recall, but the label still uses a fixed 0.5 cut. Choosing the threshold from validation recall would match the stated goal.
-* **No monitoring.** Nothing records the inputs received in production, so drift away from the training data would go unnoticed.
-
-### The model
-
-**Data.** NASA Nearest Earth Objects dataset (NeoWs API via Kaggle), about 90,800 records. Five physical and orbital features: estimated diameter (min and max), relative velocity, miss distance, absolute magnitude. Identifiers and constant columns are dropped.
-
-**Modeling.**
-* Logistic Regression baseline, then Random Forest and XGBoost tuned with `RandomizedSearchCV`
-* Stratified 70 / 15 / 15 train, validation and test split
-* Best model picked on validation F1, refit on train plus validation, scored **once** on the untouched test set
-* Class imbalance handled with class weights and `scale_pos_weight` rather than resampling
-* Explainability through feature importance and an optional SHAP summary plot
-
-**Testing and delivery.**
-* 21 pytest tests covering validation, training, every API endpoint and the Streamlit app (run headless), on every push through GitHub Actions
-* Dockerfile that reads `$PORT`, ready for Render, Railway or any container platform
-
-## Design decisions I made on purpose
-
-**Recall over accuracy.** Hazardous objects are the minority class. A model that says "safe" every time scores high accuracy and is useless. For a screening tool, missing a dangerous asteroid costs far more than a false alarm, so I select on F1 and report recall on the hazardous class explicitly.
-
-**No leakage.** Every feature is an observed property of the object itself. Nothing is derived from how NASA assigned the label.
-
-**No invented numbers.** Every metric comes from `models/metrics.json`, which `train.py` writes after a real run. This README does not quote scores I have not produced.
-
-**Honest scope.** This is a first pass screen, not a replacement for NASA's orbital hazard assessment. It does not model trajectory uncertainty or future perturbations.
-
-## Run it yourself
+The trained model is in the repo, so you can start serving right away.
 
 ```bash
 git clone https://github.com/sidhantds/Neo-Sentinal.git
 cd Neo-Sentinal
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-
-python src/download_data.py              # needs a Kaggle API token, or download manually into data/neo.csv
-python src/train.py --data data/neo.csv  # trains, compares models, writes models/
-
-uvicorn app.main:app --reload            # open http://localhost:8000/docs
-pytest tests/
+python -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt
 ```
 
-**Docker**
 ```bash
-docker build -t neo-sentinel .
-docker run -p 8000:8000 neo-sentinel
+uvicorn neo_sentinel.api.app:app --reload             # API docs at http://localhost:8000/docs
 ```
 
-**Streamlit app**
 ```bash
-streamlit run streamlit_app.py           # open http://localhost:8501
+streamlit run streamlit_app.py                        # app at http://localhost:8501
 ```
 
-## Deploy the Streamlit app (free)
-
-The app loads the trained model directly, so it needs no separate server.
-
-1. Train locally, then commit the model files (they are ignored by default):
-   ```bash
-   python src/train.py --data data/neo.csv
-   git add -f models/pipeline.joblib models/metrics.json models/feature_importance.json models/shap_summary.png
-   git commit -m "Add trained model" && git push
-   ```
-2. Go to [share.streamlit.io](https://share.streamlit.io), sign in with GitHub, click **Create app**.
-3. Repository `sidhantds/Neo-Sentinal`, branch `main`, main file `streamlit_app.py`.
-4. Under **Advanced settings**, pick **Python 3.11** (the pinned libraries need it).
-5. Deploy. You get a public link like `https://neo-sentinel.streamlit.app`.
-
-## Project structure
-
-```
-app/
-  main.py              FastAPI service
-  schemas.py           Request and response models with validation
-src/
-  download_data.py     Pulls the NASA dataset from Kaggle
-  preprocess.py        Shared validation and cleaning
-  train.py             Baseline, tuning, comparison, test evaluation
-tests/                 pytest suite (preprocessing, training, API, Streamlit)
-streamlit_app.py       Interactive app: single check, batch CSV, model explanation
-.streamlit/            App theme
-docs/PROJECT_PLAN.md   Full design notes, dataset audit and deployment guide
-Dockerfile
+```bash
+pytest                                                # 55 tests, about 15 seconds
 ```
 
-## What I learned
+Or run both with Docker:
 
-* Accuracy can lie on imbalanced data. Choosing the metric is a product decision, not a default.
-* The split strategy matters as much as the model. Touching the test set once is a discipline, not a formality.
-* Packaging the scaler with the model removed an entire class of bugs before they could happen.
-* Writing tests for an ML service is mostly about validating inputs and contracts, and that is where real bugs hide.
-* Shipping something people can call teaches more than tuning a notebook for another 0.5%.
+```bash
+docker compose up --build
+```
 
-## What I'm adding next
+### Retrain from scratch
 
-- [ ] Live Streamlit link and screenshots in this README
-- [ ] Probability calibration and a threshold chosen from the cost of false negatives
-- [ ] Pull fresh data straight from NASA's NeoWs API instead of a static CSV
-- [ ] Model versioning and experiment tracking with MLflow
-- [ ] Simple monitoring for input drift on live requests
+```bash
+python -m neo_sentinel download      # fetches the CSV and rejects it unless the SHA-256 matches
+python -m neo_sentinel train         # about 2 minutes; writes models/neo_sentinel.joblib and model_card.json
+python -m neo_sentinel experiment    # leakage and approach history experiments
+```
+
+`download` tries Kaggle first (if you have an API token), then public GitHub copies of the same file. Any source is accepted only if its checksum matches.
+
+### Score real asteroids from this week
+
+```bash
+export NASA_API_KEY=your_key         # free at https://api.nasa.gov; DEMO_KEY works but is rate limited
+python -m neo_sentinel live
+```
+
+## API
+
+| Endpoint | What it does |
+|---|---|
+| `POST /predict` | Score one close approach |
+| `POST /predict/batch` | Score up to 1,000 at once, order preserved, with tier counts |
+| `GET /model` | Full model card: version, data checksum, split, every candidate's scores, test results |
+| `GET /monitoring/drift` | Compares recent inputs with the training data (PSI per feature): `stable`, `watch` or `drift` |
+| `GET /health` | Readiness probe; `model_loaded` stays false until a model is found |
+
+```bash
+curl -X POST localhost:8000/predict -H "Content-Type: application/json" \
+  -d '{"absolute_magnitude": 21.5, "relative_velocity": 45000, "miss_distance": 5000000}'
+```
+
+```json
+{
+  "hazard_probability": 0.9926,
+  "flagged": true,
+  "risk_tier": "high",
+  "advice": "Very likely on NASA's hazardous list. Prioritise for full orbital analysis.",
+  "estimated_diameter_km": {"min": 0.1332, "max": 0.2979},
+  "brightness_rule_flag": true,
+  "warnings": [],
+  "model_version": "2026.11.11.0153-61b67ccf",
+  "threshold": 0.2111
+}
+```
+
+Inputs outside the training range are still scored, but come back with a plain-language warning. Unknown fields, impossible values and missing fields are rejected with `422`. Every response carries `X-Model-Version` and `X-Process-Time-Ms` headers.
+
+| Setting | Effect |
+|---|---|
+| `NEO_MODEL_PATH` | Load a different model bundle |
+| `NEO_PREDICTION_LOG` | Append every scored request to this JSONL file |
+| `NEO_DRIFT_WINDOW` | How many recent inputs the drift check keeps (default 5,000) |
+
+**Risk tiers.** *Low* is below the review threshold. Above it: *moderate* under 30%, *elevated* 30% to 60%, *high* 60% or more.
+
+## The app
+
+* **Check one object.** Pick an example or type values, get the probability, tier, estimated size and advice, plus a "what if it were bigger or smaller" curve that shows the jump at NASA's H = 22 line.
+* **Screen a CSV.** Upload many objects (the original NASA file works as is) and download them ranked. If the file has NASA's labels, you also see how many hazardous objects were caught.
+* **This week's approaches.** Pulls real close approaches from NASA's NeoWs feed, scores them, and puts NASA's own label next to each one.
+* **Model report.** What's running, the data findings, every candidate compared, a calibration chart, and what the model relies on.
+
+**Deploy free on Streamlit Community Cloud:** create an app from this repo with main file `streamlit_app.py` and Python 3.12. Optionally add `NASA_API_KEY` under *Secrets*. No training step is needed.
+
+**Deploy the API** on Render, Railway or Fly: point it at the `Dockerfile`. The container reads `$PORT` and has a health check built in.
+
+## Project layout
+
+```
+neo_sentinel/
+  config.py        paths, feature list, settings
+  physics.py       H to diameter, NASA's PHA thresholds, brightness rule
+  data.py          download (checksum verified), validation, cleaning
+  splitting.py     train / validation / test split by asteroid
+  models.py        candidates, search spaces, H<=22 baseline
+  metrics.py       evaluation, threshold choice, physics check, calibration
+  train.py         the training pipeline; writes bundle + model card
+  bundle.py        ModelBundle: the one object serving uses
+  monitoring.py    training profile, PSI drift monitor, out of range warnings
+  neows.py         live NASA NeoWs feed client
+  experiments.py   split leakage and approach history experiments
+  api/             FastAPI app and request/response schemas
+streamlit_app.py   the app
+models/            committed model, model card, experiment results
+tests/             55 tests: data, splitting, metrics, training, API, app, NASA parser, shipped model
+```
+
+## Limits
+
+* This is a triage aid, not NASA's hazard assessment. It does not model orbits, observation uncertainty or future perturbations.
+* It sees one close approach at a time. The same asteroid can get different scores on different passes.
+* NASA's label can change as orbits are refined. The model learned the labels as they were when the dataset was compiled.
+* The drift monitor lives in memory and resets on restart. For a long-running service, ship `NEO_PREDICTION_LOG` to proper storage.
+
+## What's next
+
+- [ ] **Use each asteroid's approach history.** Adding its closest recorded pass, number of passes and top speed lifts test average precision from **0.50 to 0.74** (`models/experiment_history_features.json`). It means changing the API to take a history instead of one observation, and computing those features from NASA's full close-approach record rather than this dataset's time window.
+- [ ] Retrain on the NeoWs browse API so the data stays current.
+- [ ] Add a live demo link and screenshots here.
 
 ## About me
 
-I'm **Sidhant Pujara**, a BCA student at MIT World Peace University, Pune, and a Data Science Intern at GlobalLogic (Hitachi). I'm working toward AI engineering roles and I learn best by building complete systems, shipping them, and then improving what broke.
+I'm **Sidhant Pujara**, a BCA student at MIT World Peace University, Pune, and a Data Science Intern at GlobalLogic (Hitachi). I'm working toward AI engineering roles, and I learn best by building complete systems, shipping them, and then improving what broke.
 
 [Portfolio](https://sidhantpujara.vercel.app) · [LinkedIn](https://linkedin.com/in/sidhant-pujara) · [GitHub](https://github.com/sidhantds)
 
-If you have feedback on this project, I'd genuinely like to hear it. Open an issue or reach out on LinkedIn.
-
 ---
 
-*Data: NASA Open Data via NeoWs, compiled on Kaggle. NASA data is public domain.*
+*Data: NASA Open Data via NeoWs, compiled on Kaggle ([sameepvani/nasa-nearest-earth-objects](https://www.kaggle.com/datasets/sameepvani/nasa-nearest-earth-objects)). NASA data is public domain.*

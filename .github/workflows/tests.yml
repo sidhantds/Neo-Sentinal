@@ -8,13 +8,32 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Run tests
-        run: pytest -q tests
+      - run: pip install -r requirements-dev.txt
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Tests (includes checks on the committed model)
+        run: pytest
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t neo-sentinel .
+      - name: Smoke test the container
+        run: |
+          docker run -d -p 8000:8000 --name api neo-sentinel
+          for i in $(seq 1 30); do curl -sf localhost:8000/health && break; sleep 1; done
+          curl -sf localhost:8000/health | grep '"model_loaded":true'
+          curl -sf -X POST localhost:8000/predict -H 'Content-Type: application/json' \
+            -d '{"absolute_magnitude":21.5,"relative_velocity":45000,"miss_distance":5000000}'

@@ -1,71 +1,99 @@
-import sys
-from pathlib import Path
+import json
 
 import pytest
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-VALID_PAYLOAD = {
-    "est_diameter_min": 0.1,
-    "est_diameter_max": 0.25,
-    "relative_velocity": 45000.0,
-    "miss_distance": 5000000.0,
-    "absolute_magnitude": 21.5,
-}
+from neo_sentinel.api.app import app
+from tests.conftest import VALID
 
 
 @pytest.fixture()
-def client():
-    # Imported here, not at module level, so the session-scoped
-    # ensure_pipeline_exists fixture in conftest.py has already written
-    # models/pipeline.joblib before the app's startup event tries to load it.
-    from app.main import app
-
-    with TestClient(app) as test_client:
-        yield test_client
+def client(use_model):
+    with TestClient(app) as c:
+        yield c
 
 
-def test_health_endpoint(client):
-    response = client.get("/health")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "ok"
-    assert body["model_loaded"] is True
+def test_health_reports_version(client):
+    body = client.get("/health").json()
+    assert body == {"status": "ok", "model_loaded": True, "model_version": body["model_version"]}
+    assert body["model_version"]
 
 
-def test_predict_valid_input_returns_expected_shape(client):
-    response = client.post("/predict", json=VALID_PAYLOAD)
-    assert response.status_code == 200
-    body = response.json()
-    assert isinstance(body["hazardous"], bool)
-    assert 0.0 <= body["hazard_probability"] <= 1.0
+def test_predict(client):
+    r = client.post("/predict", json=VALID)
+    assert r.status_code == 200
+    body = r.json()
+    assert 0 <= body["hazard_probability"] <= 1
     assert body["risk_tier"] in {"low", "moderate", "elevated", "high"}
-    assert "model_name" in body
+    assert body["flagged"] == (body["hazard_probability"] >= body["threshold"])
+    assert body["estimated_diameter_km"]["min"] < body["estimated_diameter_km"]["max"]
+    assert body["brightness_rule_flag"] is True
+    assert r.headers["X-Model-Version"] == body["model_version"]
 
 
-def test_predict_rejects_negative_values(client):
-    bad_payload = dict(VALID_PAYLOAD, relative_velocity=-100.0)
-    response = client.post("/predict", json=bad_payload)
-    assert response.status_code == 422
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"relative_velocity": -1},
+        {"miss_distance": 0},
+        {"absolute_magnitude": 99},
+        {"absolute_magnitude": "bright"},
+        {"unexpected_field": 1},
+    ],
+)
+def test_predict_rejects_bad_input(client, change):
+    assert client.post("/predict", json={**VALID, **change}).status_code == 422
 
 
 def test_predict_rejects_missing_field(client):
-    bad_payload = dict(VALID_PAYLOAD)
-    del bad_payload["miss_distance"]
-    response = client.post("/predict", json=bad_payload)
-    assert response.status_code == 422
+    payload = dict(VALID)
+    del payload["miss_distance"]
+    assert client.post("/predict", json=payload).status_code == 422
 
 
-def test_predict_rejects_inverted_diameter_range(client):
-    bad_payload = dict(VALID_PAYLOAD, est_diameter_min=1.0, est_diameter_max=0.2)
-    response = client.post("/predict", json=bad_payload)
-    assert response.status_code == 422
+def test_out_of_range_input_is_scored_with_a_warning(client):
+    body = client.post("/predict", json={**VALID, "absolute_magnitude": 3.0}).json()
+    assert body["warnings"] and "outside the training range" in body["warnings"][0]
 
 
-def test_model_info_endpoint(client):
-    response = client.get("/model-info")
-    assert response.status_code == 200
-    body = response.json()
-    assert "model_name" in body
-    assert "feature_columns" in body
+def test_batch_keeps_order_and_matches_single(client):
+    objects = [VALID, {**VALID, "absolute_magnitude": 28.0}, {**VALID, "miss_distance": 7e7}]
+    body = client.post("/predict/batch", json={"objects": objects}).json()
+    assert body["summary"]["total"] == 3
+    assert sum(body["summary"]["tiers"].values()) == 3
+    single = client.post("/predict", json=VALID).json()
+    assert body["results"][0]["hazard_probability"] == single["hazard_probability"]
+
+
+def test_batch_limits(client):
+    assert client.post("/predict/batch", json={"objects": []}).status_code == 422
+    assert client.post("/predict/batch", json={"objects": [VALID] * 1001}).status_code == 422
+
+
+def test_model_card(client):
+    card = client.get("/model").json()
+    assert {"metadata", "validation", "test", "threshold"} <= set(card)
+
+
+def test_drift_endpoint(client):
+    client.post("/predict/batch", json={"objects": [VALID] * 200})
+    report = client.get("/monitoring/drift").json()
+    assert report["status"] == "drift"  # 200 identical inputs look nothing like training data
+
+
+def test_prediction_log(use_model, tmp_path, monkeypatch):
+    log_file = tmp_path / "predictions.jsonl"
+    monkeypatch.setenv("NEO_PREDICTION_LOG", str(log_file))
+    with TestClient(app) as c:
+        c.post("/predict/batch", json={"objects": [VALID, VALID]})
+    lines = log_file.read_text().strip().splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["absolute_magnitude"] == VALID["absolute_magnitude"]
+
+
+def test_no_model_returns_503(tmp_path, monkeypatch):
+    monkeypatch.setenv("NEO_MODEL_PATH", str(tmp_path / "missing.joblib"))
+    with TestClient(app) as c:
+        assert c.get("/health").json()["model_loaded"] is False
+        assert c.post("/predict", json=VALID).status_code == 503
+        assert c.get("/model").status_code == 503

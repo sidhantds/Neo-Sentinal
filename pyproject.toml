@@ -1,0 +1,35 @@
+[project]
+name = "neo-sentinel"
+version = "2.0.0"
+description = "Hazard screening for near Earth object close approaches, trained on NASA NeoWs data."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Sidhant Pujara" }]
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+include = ["neo_sentinel*"]
+
+[project.scripts]
+neo-sentinel = "neo_sentinel.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008"]

@@ -1,17 +1,26 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
-WORKDIR /code
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PORT=8000
+
+WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
-COPY app ./app
-COPY src ./src
+COPY neo_sentinel ./neo_sentinel
 COPY models ./models
+COPY streamlit_app.py .
+COPY .streamlit ./.streamlit
 
-# Render, Railway, and most PaaS platforms inject PORT at runtime.
-# Default to 8000 for local `docker run`.
-ENV PORT=8000
+RUN useradd --create-home appuser && chown -R appuser /app
+USER appuser
+
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+  CMD python -c "import json,os,urllib.request; r=json.load(urllib.request.urlopen(f'http://localhost:{os.environ[\"PORT\"]}/health')); exit(0 if r['model_loaded'] else 1)"
 
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+# PORT is injected by Render, Railway, Fly and most container platforms.
+CMD ["sh", "-c", "uvicorn neo_sentinel.api.app:app --host 0.0.0.0 --port ${PORT}"]
