@@ -2,6 +2,9 @@
 
 **Which asteroid close approaches deserve a closer look?** NEO Sentinel scores a near Earth object's close approach and returns a calibrated probability that NASA lists it as a potentially hazardous asteroid, plus a review decision and a risk tier. It is trained on NASA's NeoWs catalog and served as a FastAPI service and a Streamlit app, with a trained model included so both work right after cloning.
 
+**Live demo: [neo-sentinal-tmtbkzewvevaeylumtctfz.streamlit.app](https://neo-sentinal-tmtbkzewvevaeylumtctfz.streamlit.app/)**
+
+[![Open the app](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://neo-sentinal-tmtbkzewvevaeylumtctfz.streamlit.app/)
 [![tests](https://github.com/sidhantds/Neo-Sentinal/actions/workflows/tests.yml/badge.svg)](https://github.com/sidhantds/Neo-Sentinal/actions/workflows/tests.yml)
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-1.9-F7931E)
@@ -161,7 +164,7 @@ Inputs outside the training range are still scored, but come back with a plain-l
 * **This week's approaches.** Pulls real close approaches from NASA's NeoWs feed, scores them, and puts NASA's own label next to each one.
 * **Model report.** What's running, the data findings, every candidate compared, a calibration chart, and what the model relies on.
 
-**Deploy free on Streamlit Community Cloud:** create an app from this repo with main file `streamlit_app.py` and Python 3.12. Optionally add `NASA_API_KEY` under *Secrets*. No training step is needed.
+**Live at [neo-sentinal-tmtbkzewvevaeylumtctfz.streamlit.app](https://neo-sentinal-tmtbkzewvevaeylumtctfz.streamlit.app/).** To deploy your own copy free on Streamlit Community Cloud, create an app from this repo with main file `streamlit_app.py` and Python 3.12. Optionally add `NASA_API_KEY` under *Secrets*. No training step is needed.
 
 **Deploy the API** on Render, Railway or Fly: point it at the `Dockerfile`. The container reads `$PORT` and has a health check built in.
 
@@ -198,7 +201,7 @@ tests/             55 tests: data, splitting, metrics, training, API, app, NASA 
 
 - [ ] **Use each asteroid's approach history.** Adding its closest recorded pass, number of passes and top speed lifts test average precision from **0.50 to 0.74** (`models/experiment_history_features.json`). It means changing the API to take a history instead of one observation, and computing those features from NASA's full close-approach record rather than this dataset's time window.
 - [ ] Retrain on the NeoWs browse API so the data stays current.
-- [ ] Deploy to Streamlit Community Cloud and add the live link here.
+- [x] Deploy to Streamlit Community Cloud ([live app](https://neo-sentinal-tmtbkzewvevaeylumtctfz.streamlit.app/)).
 
 ## About me
 
